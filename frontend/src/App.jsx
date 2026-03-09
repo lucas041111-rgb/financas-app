@@ -743,7 +743,430 @@ const navItems = [
   { id: 'transactions', label: 'Transações', icon: '💳' },
   { id: 'bills', label: 'Contas Fixas', icon: '📋' },
   { id: 'goals', label: 'Metas', icon: '🎯' },
+  { id: 'trips', label: 'Viagens', icon: '✈️' },
 ];
+
+// ==================== TRIPS PAGE ====================
+const CLOUDINARY_CLOUD = 'drnliboat';
+const CLOUDINARY_PRESET = 'viagens';
+
+const tripStatusColors = {
+  'Planejando': '#00ccff',
+  'Confirmada': '#ffaa00',
+  'Realizada': '#00ff88',
+  'Cancelada': '#ff3366',
+};
+
+const tripExpenseCategories = ['Passagem', 'Hotel', 'Alimentação', 'Transporte', 'Passeios', 'Compras', 'Seguro', 'Outros'];
+
+const TripsPage = () => {
+  const [trips, setTrips] = useState(() => JSON.parse(localStorage.getItem('trips') || '[]'));
+  const [selectedTrip, setSelectedTrip] = useState(null);
+  const [showNewTrip, setShowNewTrip] = useState(false);
+  const [showNewExpense, setShowNewExpense] = useState(false);
+  const [showReceipts, setShowReceipts] = useState(false);
+  const [uploadingIdx, setUploadingIdx] = useState(null);
+  const [tripForm, setTripForm] = useState({ name: '', destination: '', startDate: '', endDate: '', budget: '', status: 'Planejando' });
+  const [expenseForm, setExpenseForm] = useState({ description: '', amount: '', category: 'Passagem', date: new Date().toISOString().split('T')[0] });
+
+  useEffect(() => { localStorage.setItem('trips', JSON.stringify(trips)); }, [trips]);
+
+  const saveTrips = (updated) => { setTrips(updated); };
+
+  const addTrip = () => {
+    if (!tripForm.name || !tripForm.destination) return alert('Preencha nome e destino');
+    const newTrip = {
+      id: Date.now(), ...tripForm, budget: parseFloat(tripForm.budget) || 0,
+      expenses: [], receipts: [], createdAt: new Date().toISOString(),
+    };
+    const updated = [...trips, newTrip];
+    saveTrips(updated);
+    setShowNewTrip(false);
+    setTripForm({ name: '', destination: '', startDate: '', endDate: '', budget: '', status: 'Planejando' });
+  };
+
+  const deleteTrip = (id) => {
+    if (!confirm('Deletar viagem?')) return;
+    saveTrips(trips.filter(t => t.id !== id));
+    if (selectedTrip?.id === id) setSelectedTrip(null);
+  };
+
+  const addExpense = () => {
+    if (!expenseForm.description || !expenseForm.amount) return alert('Preencha todos os campos');
+    const updated = trips.map(t => t.id === selectedTrip.id
+      ? { ...t, expenses: [...t.expenses, { id: Date.now(), ...expenseForm, amount: parseFloat(expenseForm.amount) }] }
+      : t);
+    saveTrips(updated);
+    setSelectedTrip(updated.find(t => t.id === selectedTrip.id));
+    setShowNewExpense(false);
+    setExpenseForm({ description: '', amount: '', category: 'Passagem', date: new Date().toISOString().split('T')[0] });
+  };
+
+  const deleteExpense = (expId) => {
+    const updated = trips.map(t => t.id === selectedTrip.id
+      ? { ...t, expenses: t.expenses.filter(e => e.id !== expId) }
+      : t);
+    saveTrips(updated);
+    setSelectedTrip(updated.find(t => t.id === selectedTrip.id));
+  };
+
+  const uploadReceipt = async (e, tripId) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadingIdx(tripId);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', CLOUDINARY_PRESET);
+      formData.append('folder', `viagens/${tripId}`);
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.secure_url) {
+        const updated = trips.map(t => t.id === tripId
+          ? { ...t, receipts: [...t.receipts, { id: Date.now(), url: data.secure_url, name: file.name, uploadedAt: new Date().toISOString() }] }
+          : t);
+        saveTrips(updated);
+        setSelectedTrip(updated.find(t => t.id === tripId));
+      } else { alert('Erro ao fazer upload'); }
+    } catch { alert('Erro ao conectar com Cloudinary'); }
+    finally { setUploadingIdx(null); e.target.value = ''; }
+  };
+
+  const deleteReceipt = (receiptId) => {
+    const updated = trips.map(t => t.id === selectedTrip.id
+      ? { ...t, receipts: t.receipts.filter(r => r.id !== receiptId) }
+      : t);
+    saveTrips(updated);
+    setSelectedTrip(updated.find(t => t.id === selectedTrip.id));
+  };
+
+  const updateStatus = (tripId, status) => {
+    const updated = trips.map(t => t.id === tripId ? { ...t, status } : t);
+    saveTrips(updated);
+    if (selectedTrip?.id === tripId) setSelectedTrip(updated.find(t => t.id === tripId));
+  };
+
+  // Trip detail view
+  if (selectedTrip) {
+    const trip = trips.find(t => t.id === selectedTrip.id) || selectedTrip;
+    const totalSpent = trip.expenses.reduce((s, e) => s + e.amount, 0);
+    const remaining = trip.budget - totalSpent;
+    const pct = trip.budget > 0 ? Math.min((totalSpent / trip.budget) * 100, 100) : 0;
+    const catMap = {};
+    trip.expenses.forEach(e => { catMap[e.category] = (catMap[e.category] || 0) + e.amount; });
+    const pieData = Object.entries(catMap).map(([name, value]) => ({ name, value }));
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button onClick={() => setSelectedTrip(null)} style={{
+              background: 'rgba(255,255,255,0.05)', border: 'none', color: '#888',
+              padding: '8px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 18,
+            }}>←</button>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 22 }}>✈️ {trip.name}</h2>
+              <p style={{ margin: '4px 0 0', color: '#555', fontSize: 13 }}>📍 {trip.destination}</p>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select value={trip.status} onChange={e => updateStatus(trip.id, e.target.value)} style={{
+              background: `${tripStatusColors[trip.status]}15`,
+              border: `1px solid ${tripStatusColors[trip.status]}40`,
+              color: tripStatusColors[trip.status], borderRadius: 8, padding: '8px 12px',
+              cursor: 'pointer', fontSize: 13, fontWeight: 600,
+            }}>
+              {Object.keys(tripStatusColors).map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Budget summary */}
+        <div style={{
+          background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)',
+          borderRadius: 16, padding: 24,
+        }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20, textAlign: 'center' }}>
+            <div>
+              <div style={{ fontSize: 11, color: '#555', letterSpacing: 1 }}>ORÇAMENTO</div>
+              <div style={{ fontFamily: 'Fira Code', fontSize: 20, fontWeight: 700, color: '#fff', marginTop: 4 }}>{fmt(trip.budget)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#555', letterSpacing: 1 }}>GASTO</div>
+              <div style={{ fontFamily: 'Fira Code', fontSize: 20, fontWeight: 700, color: '#ff3366', marginTop: 4 }}>{fmt(totalSpent)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: '#555', letterSpacing: 1 }}>RESTANTE</div>
+              <div style={{ fontFamily: 'Fira Code', fontSize: 20, fontWeight: 700, color: remaining >= 0 ? '#00ff88' : '#ff3366', marginTop: 4 }}>{fmt(remaining)}</div>
+            </div>
+          </div>
+          {trip.budget > 0 && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: '#555' }}>Uso do orçamento</span>
+                <span style={{ fontSize: 12, color: pct > 80 ? '#ff3366' : '#888', fontFamily: 'Fira Code' }}>{pct.toFixed(0)}%</span>
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 100, height: 8 }}>
+                <div style={{
+                  width: `${pct}%`, height: '100%', borderRadius: 100, transition: 'width 0.5s',
+                  background: pct > 80 ? '#ff3366' : pct > 60 ? '#ffaa00' : '#00ff88',
+                }} />
+              </div>
+            </div>
+          )}
+          {trip.startDate && (
+            <div style={{ marginTop: 12, fontSize: 13, color: '#444' }}>
+              📅 {new Date(trip.startDate + 'T12:00:00').toLocaleDateString('pt-BR')}
+              {trip.endDate && ` → ${new Date(trip.endDate + 'T12:00:00').toLocaleDateString('pt-BR')}`}
+            </div>
+          )}
+        </div>
+
+        {/* Tabs: expenses + receipts */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setShowReceipts(false)} style={{
+            background: !showReceipts ? 'rgba(0,255,136,0.08)' : 'transparent',
+            border: `1px solid ${!showReceipts ? 'rgba(0,255,136,0.3)' : '#222'}`,
+            color: !showReceipts ? '#00ff88' : '#555', borderRadius: 8, padding: '8px 16px',
+            cursor: 'pointer', fontSize: 13,
+          }}>💸 Gastos ({trip.expenses.length})</button>
+          <button onClick={() => setShowReceipts(true)} style={{
+            background: showReceipts ? 'rgba(0,204,255,0.08)' : 'transparent',
+            border: `1px solid ${showReceipts ? 'rgba(0,204,255,0.3)' : '#222'}`,
+            color: showReceipts ? '#00ccff' : '#555', borderRadius: 8, padding: '8px 16px',
+            cursor: 'pointer', fontSize: 13,
+          }}>🧾 Comprovantes ({trip.receipts.length})</button>
+        </div>
+
+        {!showReceipts ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 14, color: '#666' }}>{trip.expenses.length} gastos registrados</span>
+              <Btn onClick={() => setShowNewExpense(true)}>+ Gasto</Btn>
+            </div>
+
+            {/* Pie chart if has expenses */}
+            {pieData.length > 0 && (
+              <div style={{
+                background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 14, padding: 20,
+              }}>
+                <p style={{ margin: '0 0 12px', fontSize: 13, color: '#666' }}>Gastos por categoria</p>
+                <ResponsiveContainer width="100%" height={160}>
+                  <PieChart>
+                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={35} outerRadius={60} dataKey="value" paddingAngle={3}>
+                      {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={(v) => fmt(v)} />
+                    <Legend formatter={(v) => v} wrapperStyle={{ fontSize: 11, color: '#888' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {trip.expenses.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#333' }}>Nenhum gasto registrado ainda</div>
+            ) : (
+              trip.expenses.sort((a, b) => new Date(b.date) - new Date(a.date)).map(exp => (
+                <div key={exp.id} style={{
+                  background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: 12, padding: '14px 18px',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: 20, background: 'rgba(255,51,102,0.1)', padding: '7px', borderRadius: 9 }}>
+                      {categoryIcons[exp.category] || '📦'}
+                    </span>
+                    <div>
+                      <div style={{ fontSize: 14, color: '#ddd' }}>{exp.description}</div>
+                      <div style={{ fontSize: 12, color: '#555' }}>{exp.category} · {new Date(exp.date + 'T12:00:00').toLocaleDateString('pt-BR')}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontFamily: 'Fira Code', fontWeight: 700, color: '#ff3366' }}>-{fmt(exp.amount)}</span>
+                    <button onClick={() => deleteExpense(exp.id)} style={{
+                      background: 'rgba(255,51,102,0.1)', border: 'none', color: '#ff3366',
+                      width: 28, height: 28, borderRadius: 7, cursor: 'pointer', fontSize: 14,
+                    }}>×</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 14, color: '#666' }}>{trip.receipts.length} comprovantes</span>
+              <label style={{
+                background: '#00ff88', color: '#000', borderRadius: 10, padding: '10px 18px',
+                fontWeight: 600, fontSize: 14, cursor: 'pointer',
+              }}>
+                {uploadingIdx === trip.id ? '⏳ Enviando...' : '📎 Subir Comprovante'}
+                <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
+                  onChange={e => uploadReceipt(e, trip.id)} disabled={uploadingIdx === trip.id} />
+              </label>
+            </div>
+
+            {trip.receipts.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 0', color: '#333' }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🧾</div>
+                <div>Nenhum comprovante ainda</div>
+                <div style={{ fontSize: 12, marginTop: 8, color: '#2a2a2a' }}>Suba fotos de passagens, hotéis, recibos...</div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+                {trip.receipts.map(r => (
+                  <div key={r.id} style={{
+                    background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 12, overflow: 'hidden', position: 'relative',
+                  }}>
+                    <a href={r.url} target="_blank" rel="noreferrer">
+                      <img src={r.url} alt={r.name} style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block' }} />
+                    </a>
+                    <div style={{ padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: 11, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>
+                        {r.name}
+                      </div>
+                      <button onClick={() => deleteReceipt(r.id)} style={{
+                        background: 'rgba(255,51,102,0.1)', border: 'none', color: '#ff3366',
+                        width: 24, height: 24, borderRadius: 6, cursor: 'pointer', fontSize: 12, flexShrink: 0,
+                      }}>×</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Add expense modal */}
+        {showNewExpense && (
+          <Modal title="Novo Gasto" onClose={() => setShowNewExpense(false)}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Input label="DESCRIÇÃO" placeholder="Ex: Passagem aérea, Hotel..." value={expenseForm.description}
+                onChange={e => setExpenseForm(f => ({ ...f, description: e.target.value }))} />
+              <Input label="VALOR (R$)" type="number" placeholder="0,00" value={expenseForm.amount}
+                onChange={e => setExpenseForm(f => ({ ...f, amount: e.target.value }))} />
+              <Select label="CATEGORIA" value={expenseForm.category}
+                onChange={e => setExpenseForm(f => ({ ...f, category: e.target.value }))}>
+                {tripExpenseCategories.map(c => <option key={c}>{categoryIcons[c] || '📦'} {c}</option>)}
+              </Select>
+              <Input label="DATA" type="date" value={expenseForm.date}
+                onChange={e => setExpenseForm(f => ({ ...f, date: e.target.value }))} />
+              <Btn onClick={addExpense} style={{ marginTop: 8 }}>Adicionar Gasto</Btn>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // Trips list view
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22 }}>Viagens ✈️</h2>
+          <p style={{ margin: '4px 0 0', color: '#555', fontSize: 13 }}>{trips.length} viagem{trips.length !== 1 ? 's' : ''} cadastrada{trips.length !== 1 ? 's' : ''}</p>
+        </div>
+        <Btn onClick={() => setShowNewTrip(true)}>+ Nova Viagem</Btn>
+      </div>
+
+      {trips.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '80px 0', color: '#333' }}>
+          <div style={{ fontSize: 60, marginBottom: 16 }}>✈️</div>
+          <div style={{ fontSize: 16, marginBottom: 8 }}>Nenhuma viagem cadastrada</div>
+          <div style={{ fontSize: 13 }}>Planeje sua próxima aventura!</div>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
+          {trips.map(trip => {
+            const totalSpent = trip.expenses.reduce((s, e) => s + e.amount, 0);
+            const pct = trip.budget > 0 ? Math.min((totalSpent / trip.budget) * 100, 100) : 0;
+            const statusColor = tripStatusColors[trip.status] || '#888';
+            return (
+              <div key={trip.id} onClick={() => setSelectedTrip(trip)} style={{
+                background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)',
+                borderRadius: 16, padding: 24, cursor: 'pointer', transition: 'all 0.2s',
+              }}
+                onMouseEnter={e => e.currentTarget.style.border = `1px solid ${statusColor}40`}
+                onMouseLeave={e => e.currentTarget.style.border = '1px solid rgba(255,255,255,0.07)'}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: '#ddd' }}>✈️ {trip.name}</div>
+                    <div style={{ fontSize: 13, color: '#555', marginTop: 4 }}>📍 {trip.destination}</div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                    <span style={{
+                      background: `${statusColor}15`, border: `1px solid ${statusColor}40`,
+                      color: statusColor, borderRadius: 6, padding: '3px 8px', fontSize: 11, fontWeight: 600,
+                    }}>{trip.status}</span>
+                    <button onClick={e => { e.stopPropagation(); deleteTrip(trip.id); }} style={{
+                      background: 'rgba(255,51,102,0.1)', border: 'none', color: '#ff3366',
+                      width: 24, height: 24, borderRadius: 6, cursor: 'pointer', fontSize: 12,
+                    }}>×</button>
+                  </div>
+                </div>
+
+                {trip.startDate && (
+                  <div style={{ fontSize: 12, color: '#444', marginBottom: 12 }}>
+                    📅 {new Date(trip.startDate + 'T12:00:00').toLocaleDateString('pt-BR')}
+                    {trip.endDate && ` → ${new Date(trip.endDate + 'T12:00:00').toLocaleDateString('pt-BR')}`}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: '#555' }}>Gasto: <span style={{ color: '#ff3366', fontFamily: 'Fira Code' }}>{fmt(totalSpent)}</span></span>
+                  {trip.budget > 0 && <span style={{ fontSize: 12, color: '#555' }}>de <span style={{ color: '#888', fontFamily: 'Fira Code' }}>{fmt(trip.budget)}</span></span>}
+                </div>
+
+                {trip.budget > 0 && (
+                  <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 100, height: 5 }}>
+                    <div style={{
+                      width: `${pct}%`, height: '100%', borderRadius: 100,
+                      background: pct > 80 ? '#ff3366' : pct > 60 ? '#ffaa00' : '#00ff88', transition: 'width 0.5s',
+                    }} />
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
+                  <span style={{ fontSize: 12, color: '#444' }}>💸 {trip.expenses.length} gastos</span>
+                  <span style={{ fontSize: 12, color: '#444' }}>🧾 {trip.receipts.length} comprovantes</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showNewTrip && (
+        <Modal title="Nova Viagem ✈️" onClose={() => setShowNewTrip(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <Input label="NOME DA VIAGEM" placeholder="Ex: Férias em Floripa, Viagem a SP..." value={tripForm.name}
+              onChange={e => setTripForm(f => ({ ...f, name: e.target.value }))} />
+            <Input label="DESTINO" placeholder="Ex: Florianópolis, SC" value={tripForm.destination}
+              onChange={e => setTripForm(f => ({ ...f, destination: e.target.value }))} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Input label="DATA DE IDA" type="date" value={tripForm.startDate}
+                onChange={e => setTripForm(f => ({ ...f, startDate: e.target.value }))} />
+              <Input label="DATA DE VOLTA" type="date" value={tripForm.endDate}
+                onChange={e => setTripForm(f => ({ ...f, endDate: e.target.value }))} />
+            </div>
+            <Input label="ORÇAMENTO (R$)" type="number" placeholder="0,00" value={tripForm.budget}
+              onChange={e => setTripForm(f => ({ ...f, budget: e.target.value }))} />
+            <Select label="STATUS" value={tripForm.status}
+              onChange={e => setTripForm(f => ({ ...f, status: e.target.value }))}>
+              {Object.keys(tripStatusColors).map(s => <option key={s}>{s}</option>)}
+            </Select>
+            <Btn onClick={addTrip} style={{ marginTop: 8 }}>Criar Viagem</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
@@ -862,6 +1285,7 @@ export default function App() {
         {page === 'transactions' && <TransactionsPage transactions={transactions} onAdd={addTransaction} onDelete={deleteTransaction} />}
         {page === 'bills' && <BillsPage bills={bills} onAdd={addBill} onDelete={deleteBill} onToggle={toggleBill} />}
         {page === 'goals' && <GoalsPage goals={goals} onAdd={addGoal} onUpdate={updateGoal} onDelete={deleteGoal} />}
+        {page === 'trips' && <TripsPage />}
       </div>
     </div>
   );
