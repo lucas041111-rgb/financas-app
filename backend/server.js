@@ -3,6 +3,7 @@ import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { db, run, get, all } from './database.js';
+import { startPolling } from './bot.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -291,6 +292,11 @@ app.get('/api/health', (req, res) => {
 });
 
 // Iniciar servidor
+// Start Telegram bot if token is set
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  startPolling();
+}
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
