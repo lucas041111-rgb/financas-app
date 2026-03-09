@@ -5,7 +5,7 @@ const db = new sqlite.Database('/tmp/financas.db');
 
 const run = (sql, params = []) => {
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
+    db.run(sql, params, function(err) {
       if (err) reject(err);
       else resolve({ lastInsertRowid: this.lastID, changes: this.changes });
     });
@@ -40,7 +40,6 @@ db.serialize(() => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-
   db.run(`
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +53,6 @@ db.serialize(() => {
       FOREIGN KEY (user_id) REFERENCES users(id)
     )
   `);
-
   db.run(`
     CREATE TABLE IF NOT EXISTS goals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
